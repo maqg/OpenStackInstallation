@@ -41,6 +41,9 @@ if [ "$?" != 0 ]; then
 fi
 echo -e "\e[1;32mConfig Hosts OK! \e[0m"
 
+install_controller_source
+echo -e "\e[1;32mInstall $OPENSTACK_VERSION Source OK! \e[0m"
+
 install_chrony
 config_chrony_server
 echo -e "\e[1;32mInstall and Config chrony OK! \e[0m"
@@ -53,9 +56,6 @@ echo -e "\e[1;32mInstall and Config RabbitMQ OK! \e[0m"
 
 install_memcached
 echo -e "\e[1;32mInstall and Config MemCached OK! \e[0m"
-
-install_source
-echo -e "\e[1;32mInstall $OPENSTACK_VERSION Source OK! \e[0m"
 
 install_controller_nova
 echo -e "\e[1;32mInstall Controller nova OK! \e[0m"

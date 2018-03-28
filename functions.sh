@@ -87,7 +87,21 @@ config_chrony_server()
 	echo "Config chronyd Service OK"
 }
 
-install_source()
+
+install_controller_source()
+{
+	RESULT=$(rpm -qa centos-release-openstack-$OPENSTACK_VERSION)
+	if [ "$RESULT" = "" ]; then
+		yum install centos-release-openstack-$OPENSTACK_VERSION -y
+		yum install https://rdoproject.org/repos/rdo-release.rpm -y
+		yum upgrade
+		yum install python-openstackclient -y
+		yum install openstack-selinux -y
+	fi
+	echo "Install $OPENSTACK_VERSION OpenStack Source OK"
+}
+
+install_compute_source()
 {
 	RESULT=$(rpm -qa centos-release-openstack-$OPENSTACK_VERSION)
 	if [ "$RESULT" = "" ]; then
@@ -195,7 +209,105 @@ config_compute_service()
 	echo "Config Compute Service OK"
 }
 
-install_controller_nova()
+config_nova_database()
 {
+	mysql -uroot -p$DBROOT_PASS -e "use nova;" > /dev/null 2>&1
+	if [ "$?" != 0 ]; then
+		mysql -uroot -p$DBROOT_PASS -e "CREATE DATABASE nova_api;"
+		mysql -uroot -p$DBROOT_PASS -e "CREATE DATABASE nova;"
+		mysql -uroot -p$DBROOT_PASS -e "CREATE DATABASE nova_cell0;"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON nova_api.* TO 'nova'@'localhost' IDENTIFIED BY '$NOVA_PASS';"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON nova_api.* TO 'nova'@'%' IDENTIFIED BY '$NOVA_PASS';"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'localhost' IDENTIFIED BY '$NOVA_PASS';"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'%' IDENTIFIED BY '$NOVA_PASS';"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON nova_cell0.* TO 'nova'@'localhost' IDENTIFIED BY '$NOVA_PASS';"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON nova_cell0.* TO 'nova'@'%' IDENTIFIED BY '$NOVA_PASS';"
+	fi
+	
+}
 
+install_nova_service()
+{
+	# Create Nova User
+	echo "To create 'nova' User OK"
+	openstack user create --domain default --password-prompt nova
+	echo "Create 'nova' User OK"
+
+	echo "To add 'admin' role to 'nova' user"
+	openstack role add --project service --user nova admin
+	echo "add 'admin' role to 'nova' user OK"
+
+	echo "To create 'nova' service"
+	openstack service create --name nova --description "OpenStack Compute" compute
+	echo "Create 'nova' service OK"
+
+	echo "To Create Compute API Service"
+	openstack endpoint create --region RegionOne compute public http://controller:8774/v2.1
+	openstack endpoint create --region RegionOne compute internal http://controller:8774/v2.1
+	openstack endpoint create --region RegionOne compute admin http://controller:8774/v2.1
+	echo "Create Compute API Service OK"
+
+	echo "To Create placement Service"
+	openstack user create --domain default --password-prompt placement
+	openstack role add --project service --user placement admin
+	openstack service create --name placement --description "Placement API" placement
+	openstack endpoint create --region RegionOne placement public http://controller:8778
+	openstack endpoint create --region RegionOne placement internal http://controller:8778
+	openstack endpoint create --region RegionOne placement admin http://controller:8778
+	echo "Create placement Service OK"
+
+	echo "To Install Nova Service"
+	yum install openstack-nova-api openstack-nova-conductor openstack-nova-console openstack-nova-novncproxy openstack-nova-scheduler openstack-nova-placement-api -y
+	echo "Install Nova Service OK"
+}
+
+finalize_nova_installation()
+{
+	systemctl enable openstack-nova-api.service openstack-nova-consoleauth.service \
+		openstack-nova-scheduler.service openstack-nova-conductor.service openstack-nova-novncproxy.service
+	systemctl start openstack-nova-api.service openstack-nova-consoleauth.service \
+		openstack-nova-scheduler.service openstack-nova-conductor.service openstack-nova-novncproxy.service
+
+	echo "Finalize nova installation OK"
+}
+
+config_nova_service()
+{
+	FILE_RAW=./nova_raw.conf
+	FILE_TMP=./nova.conf
+	FILE_DST=/etc/nova/nova.conf
+	FILE_BAK=/etc/nova/nova.conf.bak
+
+	cp $FILE_RAW $FILE_TMP
+
+	sed "s/RABBIT_PASS/$RABBIT_PASS/g" -i $FILE_TMP
+	sed "s/NOVA_PASS/$NOVA_PASS/g" -i $FILE_TMP
+	sed "s/PLACEMENT_PASS/$PLACEMENT_PASS/g" -i $FILE_TMP
+	sed "s/CONTROLLER_ADDR/$CONTROLLER_ADDR/g" -i $FILE_TMP
+	sed "s/CONTROLLER_HOSTNAME/$CONTROLLER_HOSTNAME/g" -i $FILE_TMP
+
+	if [ ! -f $FILE_BAK ]; then
+		cp $FILE_DST $FILE_BAK
+	fi
+
+	mv $FILE_TMP $FILE_DST
+
+	echo "Config Nova Service OK"
+}
+
+install_nova()
+{
+	# Step1, Config Nova Database
+	config_nova_database
+
+	# Step2, Install Nova Serviec
+	install_nova_service
+
+	# Step3, Config Nova
+	config_nova_service
+
+	# Step6, Finalize installation
+	finalize_nova_installation
+
+	echo "Install No Service OK"
 }
