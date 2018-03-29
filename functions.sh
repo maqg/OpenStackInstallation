@@ -93,10 +93,8 @@ install_controller_source()
 	RESULT=$(rpm -qa centos-release-openstack-$OPENSTACK_VERSION)
 	if [ "$RESULT" = "" ]; then
 		yum install centos-release-openstack-$OPENSTACK_VERSION -y
-		yum install https://rdoproject.org/repos/rdo-release.rpm -y
 		yum upgrade
 		yum install python-openstackclient -y
-		yum install openstack-selinux -y
 	fi
 	echo "Install $OPENSTACK_VERSION OpenStack Source OK"
 }
@@ -140,10 +138,10 @@ install_memcached()
 		CONFIG_FILE=/etc/sysconfig/memcached
 
 		echo "PORT=\"11211\"
-		USER=\"memcached\"
-		MAXCONN=\"1024\"
-		CACHESIZE=\"64\"
-		OPTIONS=\"-l 127.0.0.1,::1,$CONTROLLER_HOSTNAME\"" > $CONFIG_FILE
+USER=\"memcached\"
+MAXCONN=\"1024\"
+CACHESIZE=\"64\"
+OPTIONS=\"-l 127.0.0.1,::1,$CONTROLLER_HOSTNAME\"" > $CONFIG_FILE
 		
 		systemctl enable memcached.service
 		systemctl start memcached.service
@@ -151,6 +149,37 @@ install_memcached()
 		echo "Install MemCached OK"
 	else
 		echo "MemCached already installed"
+	fi
+}
+
+install_etcd()
+{
+	RESULT=$(rpm -qa etcd)
+	if [ "$RESULT" = "" ]; then
+
+		yum install etcd -y
+
+		FILE_RAW=./etcd_raw.conf
+		FILE_TMP=./etcd.conf
+		FILE_DST=/etc/etcd/etcd.conf
+		FILE_BAK=/etc/etcd/etcd.conf.bak
+
+		cp $FILE_RAW $FILE_TMP
+
+		sed "s/CONTROLLER_ADDR/$CONTROLLER_ADDR/g" -i $FILE_TMP
+
+		if [ ! -f $FILE_BAK ]; then
+			cp $FILE_DST $FILE_BAK
+		fi
+
+		mv $FILE_TMP $FILE_DST
+
+		systemctl enable etcd.service
+		systemctl start etcd.service
+
+		echo "Install ETCD OK"
+	else
+		echo "ETCD already installed"
 	fi
 }
 
@@ -295,19 +324,200 @@ config_nova_service()
 	echo "Config Nova Service OK"
 }
 
+config_placement_http()
+{
+	FILE_RAW=./00-nova-placement-api.conf
+	FILE_DST=/etc/httpd/conf.d/00-nova-placement-api.conf
+	FILE_BAK=/etc/httpd/conf.d/00-nova-placement-api.conf.bak
+
+	if [ ! -f $FILE_BAK ]; then
+		cp $FILE_DST $FILE_BAK
+	fi
+
+	cp $FILE_RAW $FILE_DST
+
+	systemctl restart httpd
+
+	echo "Config Placement HTTP Service OK"
+}
+
 install_nova()
 {
+	nova-manage cell_v2 list_cells
+	if [ "$?" = 0 ]; then
+		echo "Nova Service already installed"
+		return 0
+	fi
+
 	# Step1, Config Nova Database
 	config_nova_database
+	echo "Config Nova Database OK"
 
 	# Step2, Install Nova Serviec
 	install_nova_service
+	echo "Install Nova Service OK"
 
 	# Step3, Config Nova
 	config_nova_service
+	echo "Config Nova Service OK"
+
+	# Step4, Config Placement Http Service
+	config_placement_http
+	echo "Config Placement Service OK"
+
+	# Step 5, To sync DB Config
+	/bin/sh -c "nova-manage api_db sync" nova
+	/bin/sh -c "nova-manage cell_v2 map_cell0" nova
+	/bin/sh -c "nova-manage cell_v2 create_cell --name=cell1 --verbose" nova
+	/bin/sh -c "nova-manage db sync" nova
+	echo "Sync Nova Database OK"
 
 	# Step6, Finalize installation
 	finalize_nova_installation
+	echo "Finalize Nova Installation OK"
 
-	echo "Install No Service OK"
+	# Step7, To Verify Installation
+	nova-manage cell_v2 list_cells
+	echo "Test Nova Installation OK"
+
+	echo "Install Nova Service OK"
+}
+
+
+config_keystone_database()
+{
+	mysql -uroot -p$DBROOT_PASS -e "use keystone;" > /dev/null 2>&1
+	if [ "$?" != 0 ]; then
+		mysql -uroot -p$DBROOT_PASS -e "CREATE DATABASE keystone;"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON keystone.* TO 'nova'@'localhost' IDENTIFIED BY '$KEYSTONE_PASS';"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON keystone.* TO 'nova'@'%' IDENTIFIED BY '$KEYSTONE_PASS';"
+	fi
+}
+
+
+install_keystone_service()
+{
+	echo "To Install KeyStone Service"
+	yum install openstack-keystone httpd mod_wsgi -y
+	echo "Install KeyStone Service OK"
+}
+
+
+config_keystone()
+{
+	FILE_RAW=./keystone_raw.conf
+	FILE_TMP=./keystone.conf
+	FILE_DST=/etc/keystone/keystone.conf
+	FILE_BAK=/etc/keystone/keystone.conf.bak
+
+	if [ -f $FILE_BAK ]; then
+		echo "KeyStone Already Configured"
+		return 1
+	fi
+
+	cp $FILE_RAW $FILE_TMP
+
+	sed "s/KEYSTONE_PASS/$KEYSTONE_PASS/g" -i $FILE_TMP
+
+	if [ ! -f $FILE_BAK ]; then
+		cp $FILE_DST $FILE_BAK
+	fi
+
+	mv $FILE_TMP $FILE_DST
+
+	# Sync keystone database
+	/bin/sh -c "keystone-manage db_sync" keystone
+
+	echo "To Initialize fetnet respositories"
+	keystone-manage fernet_setup --keystone-user keystone --keystone-group keystone
+	keystone-manage credential_setup --keystone-user keystone --keystone-group keystone
+
+	keystone-manage bootstrap --bootstrap-password $ADMIN_PASS \
+		--bootstrap-admin-url http://controller:35357/v3/ \
+		--bootstrap-internal-url http://controller:5000/v3/ \
+		--bootstrap-public-url http://controller:5000/v3/ \
+		--bootstrap-region-id RegionOne
+
+	echo "Config KeyStone Service OK"
+}
+
+
+config_keystone_apache()
+{
+	if [ -f /etc/httpd/conf.d/wsgi-keystone.conf ]; then
+		echo "KeyStone Apache Already Configured"
+		return 1
+	fi
+
+	ln -s /usr/share/keystone/wsgi-keystone.conf /etc/httpd/conf.d/
+
+	sed -i '/^ServerName*/d' /etc/httpd/conf/httpd.conf
+	sed -i "N;1aServerName $CONTROLLER_HOSTNAME" /etc/httpd/conf/httpd.conf
+
+	systemctl enable httpd.service
+	systemctl restart httpd.service
+
+	echo "Config KeyStone Apache OK"
+}
+
+
+initialize_keystone()
+{
+	# create service project
+	openstack project create --domain default --description "Service Project" service
+
+	# Create Demo Project:
+	openstack project create --domain default --description "Demo Project" demo
+
+	# Create Demo User, with password demo123
+	openstack user create --domain default --password-prompt demo
+
+	# Create User Role
+	openstack role create user
+	 
+	# Add the user role to the demo user of the demo project:
+	openstack role add --project demo --user demo user
+
+	echo "Initialize KeyStone OK"
+}
+
+install_keystone()
+{
+	echo "Start to run KeyStone installation"
+
+	source ./admin-openrc
+	openstack token issue > /dev/null 2>&1
+	if [ "$?" = 0 ]; then
+		echo "KeyStone Already Installed"
+		return 1
+	fi
+
+	# Step1, Config Database
+	config_keystone_database
+	echo "Config KeyStone Database OK"
+
+	# Step2, Install KeyStone Service
+	install_keystone_service
+	echo "Install KeyStone Service OK"
+
+	# Step3, Config KeyStone
+	config_keystone
+	echo "Config KeyStone OK"
+
+	# Step4, Config Apache
+	config_keystone_apache
+	echo "Config KeyStone Apache OK"
+
+	# Step5, Initialize KeyStone
+	initialize_keystone
+	echo "Initialize KeyStone OK"
+
+	# Verify KeyStone
+	source ./admin-openrc
+	unset OS_AUTH_URL OS_PASSWORD
+
+	openstack --os-auth-url http://controller:35357/v3 --os-project-domain-name default \
+		--os-user-domain-name default --os-project-name admin --os-username admin token issue
+
+	echo "Install KeyStone Service OK"
 }

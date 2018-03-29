@@ -24,9 +24,9 @@ if [ "$OS_VERSION" != 7 ]; then
 	exit 1
 fi
 
-install_nova
-echo -e "\e[1;32mInstall Nova OK! \e[0m"
+source ./admin-openrc
 
+install_nova
 echo ""
-echo -e "\e[1;32mInstall OpenStack Controller of \"$OPENSTACK_VERSION\" OK! \e[0m"
+echo -e "\e[1;32mInstall Nova OK! \e[0m"
 echo ""

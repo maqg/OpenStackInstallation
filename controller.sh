@@ -14,13 +14,6 @@ LOGFILE=/var/log/openstack_install_compute.log
 
 OS_VERSION=$(cat /etc/centos-release | cut -b 22)
 
-# like NAME#VERSION#MUST, for eg: python3#3.2#yes
-PACKAGES="nginx:1.6.3:yes \
-		  lrzsz::yes \
-		  rabbitmq-server::yes \
-		  chrony::yes \
-		  zip::yes"
-
 # Get platform and version info
 get_platform_info
 echo "Platform: \"$PLATFORM_TYPE\", Version: \"$PLATFORM_VERSION\"" >> $LOGFILE
@@ -57,7 +50,11 @@ echo -e "\e[1;32mInstall and Config RabbitMQ OK! \e[0m"
 install_memcached
 echo -e "\e[1;32mInstall and Config MemCached OK! \e[0m"
 
-install_controller_nova
+install_etcd
+echo -e "\e[1;32mInstall and Config ETCD OK! \e[0m"
+
+# call nova installation scripts.
+./nova.sh
 echo -e "\e[1;32mInstall Controller nova OK! \e[0m"
 
 echo ""
