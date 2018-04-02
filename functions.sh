@@ -521,3 +521,151 @@ install_keystone()
 
 	echo "Install KeyStone Service OK"
 }
+
+
+config_glance_database()
+{
+	mysql -uroot -p$DBROOT_PASS -e "use glance;" > /dev/null 2>&1
+	if [ "$?" != 0 ]; then
+		mysql -uroot -p$DBROOT_PASS -e "CREATE DATABASE glance;"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON glance.* TO 'glance'@'localhost' IDENTIFIED BY '$GLANCE_PASS';"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON glance.* TO 'glance'@'%' IDENTIFIED BY '$GLANCE_PASS';"
+	fi
+	
+}
+
+
+create_glance_credentials()
+{
+	openstack user show glance
+	if [ "$?" = 0 ]; then
+		echo "glance USER already exist"
+		return 0
+	fi
+
+	openstack user create --domain default --password $GLANCE_PASS glance
+
+	openstack role add --project service --user glance admin
+
+	openstack service create --name glance --description "OpenStack Image" image
+
+	openstack endpoint create --region RegionOne image public http://controller:9292
+
+	openstack endpoint create --region RegionOne image internal http://controller:9292
+
+	openstack endpoint create --region RegionOne image admin http://controller:9292
+
+	echo "Create Glance Credentials OK"
+}
+
+config_glance_registry()
+{
+	FILE_RAW=./glance-registry_raw.conf
+	FILE_TMP=./glance-registry.conf
+	FILE_DST=/etc/glance/glance-registry.conf
+	FILE_BAK=/etc/glance/glance-registry.conf.bak
+
+	if [ -f $FILE_BAK ]; then
+		echo "Glance API Service already configured"
+		return 0
+	fi
+
+	cp $FILE_RAW $FILE_TMP
+
+	sed "s/GLANCE_PASS/$GLANCE_PASS/g" -i $FILE_TMP
+
+	if [ ! -f $FILE_BAK ]; then
+		cp $FILE_DST $FILE_BAK
+	fi
+
+	mv $FILE_TMP $FILE_DST
+
+	echo "Config Glance Registry Service OK"
+}
+
+
+config_glance_api()
+{
+	FILE_RAW=./glance-api_raw.conf
+	FILE_TMP=./glance-api.conf
+	FILE_DST=/etc/glance/glance-api.conf
+	FILE_BAK=/etc/glance/glance-api.conf.bak
+
+	if [ -f $FILE_BAK ]; then
+		echo "Glance Service already configured"
+		return 0
+	fi
+
+	cp $FILE_RAW $FILE_TMP
+
+	sed "s/GLANCE_PASS/$GLANCE_PASS/g" -i $FILE_TMP
+
+	if [ ! -f $FILE_BAK ]; then
+		cp $FILE_DST $FILE_BAK
+	fi
+
+	mv $FILE_TMP $FILE_DST
+
+	echo "Config Glance Service OK"
+}
+
+verify_glance_installation()
+{
+	openstack image show cirrus
+	if [ "$?" = 0 ]; then
+		echo "Image already installed"
+		return 0
+	fi
+
+	. admin-openrc
+
+	wget http://download.cirros-cloud.net/0.3.5/cirros-0.3.5-x86_64-disk.img -o ../cirros-0.3.5-x86_64-disk.img
+
+	openstack image create "cirros" \
+		--file ../cirros-0.3.5-x86_64-disk.img \
+	    --disk-format qcow2 --container-format bare \
+	    --public
+
+	openstack image list
+
+	if [ "$?" = 0 ]; then
+		echo "Verify Glance Installation OK"
+	else:
+		echo "Verify Glance Installation Failed"
+	fi
+}
+
+install_glance()
+{
+	echo "To install Glance Servce Now"
+
+	source ./admin-openrc
+
+	echo "To install glance service"
+	config_glance_database
+	echo "Install glance service OK"
+
+	echo "To create glance credentials"
+	create_glance_credentials
+	echo "Create glance credentials OK"
+
+	yum install openstack-glance -y
+
+	echo "To Config Glance Service"
+	config_glance_api
+	echo "Config Glance Service OK"
+
+	echo "To Config Glance Registry Service"
+	config_glance_registry
+	echo "Config Glance Registry Service OK"
+
+	/bin/sh -c "glance-manage db_sync" glance 
+	chmod 777 /var/log/glance/* -R
+	
+	systemctl enable openstack-glance-api.service openstack-glance-registry.service
+	systemctl restart openstack-glance-api.service openstack-glance-registry.service
+
+	echo "To Verify Glance installation"
+	verify_glance_installation
+	echo "Verified Glance Service"
+}
