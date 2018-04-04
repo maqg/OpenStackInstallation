@@ -61,4 +61,5 @@ config_compute_service
 
 echo ""
 echo -e "\e[1;32mInstall OpenStack Compute Node of \"$OPENSTACK_VERSION\" OK! \e[0m"
+echo -e "\e[1;32m EXEC CMD in controller: /bin/sh -c \"nova-manage cell_v2 discover_hosts --verbose\" nova \e[0m"
 echo ""

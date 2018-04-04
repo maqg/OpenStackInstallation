@@ -257,6 +257,12 @@ config_nova_database()
 
 install_nova_service()
 {
+	openstack user show nova > /dev/null 2>&1
+	if [ "$?" = 0 ]; then
+		echo "Nova Service Already Configured"
+		return
+	fi
+
 	# Create Nova User
 	echo "To create 'nova' User OK"
 	openstack user create --domain default --password $NOVA_PASS nova
