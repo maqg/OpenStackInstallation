@@ -259,7 +259,7 @@ install_nova_service()
 {
 	# Create Nova User
 	echo "To create 'nova' User OK"
-	openstack user create --domain default --password-prompt nova
+	openstack user create --domain default --password $NOVA_PASS nova
 	echo "Create 'nova' User OK"
 
 	echo "To add 'admin' role to 'nova' user"
@@ -277,7 +277,7 @@ install_nova_service()
 	echo "Create Compute API Service OK"
 
 	echo "To Create placement Service"
-	openstack user create --domain default --password-prompt placement
+	openstack user create --domain default --password $PLACEMENT_PASS placement
 	openstack role add --project service --user placement admin
 	openstack service create --name placement --description "Placement API" placement
 	openstack endpoint create --region RegionOne placement public http://controller:8778
@@ -341,7 +341,7 @@ config_placement_http()
 	echo "Config Placement HTTP Service OK"
 }
 
-install_nova()
+install_nova_controller()
 {
 	nova-manage cell_v2 list_cells
 	if [ "$?" = 0 ]; then
@@ -470,7 +470,7 @@ initialize_keystone()
 	openstack project create --domain default --description "Demo Project" demo
 
 	# Create Demo User, with password demo123
-	openstack user create --domain default --password-prompt demo
+	openstack user create --domain default --password $DEMO_PASS demo
 
 	# Create User Role
 	openstack role create user
@@ -630,7 +630,7 @@ verify_glance_installation()
 
 	if [ "$?" = 0 ]; then
 		echo "Verify Glance Installation OK"
-	else:
+	else
 		echo "Verify Glance Installation Failed"
 	fi
 }

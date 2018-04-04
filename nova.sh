@@ -26,7 +26,7 @@ fi
 
 source ./admin-openrc
 
-install_nova
+install_nova_controller
 echo ""
 echo -e "\e[1;32mInstall Nova OK! \e[0m"
 echo ""
