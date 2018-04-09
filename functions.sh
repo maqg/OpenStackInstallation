@@ -227,7 +227,9 @@ config_compute_service()
 	cp ./nova_compute_raw.conf $FILE
 	sed "s/RABBIT_PASS/$RABBIT_PASS/g" -i $FILE
 	sed "s/NOVA_PASS/$NOVA_PASS/g" -i $FILE
+	sed "s/NEUTRON_PASS/$NEUTRON_PASS/g" -i $FILE
 	sed "s/PLACEMENT_PASS/$PLACEMENT_PASS/g" -i $FILE
+	sed "s/CONTROLLER_HOSTNAME/$CONTROLLER_HOSTNAME/g" -i $FILE
 	sed "s/MANAGEMENT_INTERFACE_IP_ADDRESS/$COMPUTE_MANAGE_ADDR/g" -i $FILE
 
 	cp $FILE /etc/nova/nova.conf
@@ -679,13 +681,13 @@ install_glance()
 }
 
 
-onfig_neutron_database()
+config_neutron_database()
 {
 	mysql -uroot -p$DBROOT_PASS -e "use neutron;" > /dev/null 2>&1
 	if [ "$?" != 0 ]; then
 		mysql -uroot -p$DBROOT_PASS -e "CREATE DATABASE neutron;"
-		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON neutron* TO 'neutron'@'localhost' IDENTIFIED BY '$NEUTRON_PASS';"
-		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON neutron* TO 'neutron'@'%' IDENTIFIED BY '$NEUTRON_PASS';"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON neutron.* TO 'neutron'@'localhost' IDENTIFIED BY '$NEUTRON_PASS';"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON neutron.* TO 'neutron'@'%' IDENTIFIED BY '$NEUTRON_PASS';"
 	fi
 }
 
@@ -697,6 +699,8 @@ create_neutron_credentials()
 		echo "neutron USER already exist"
 		return 0
 	fi
+
+	. admin-openrc
 
 	openstack user create --domain default --password $NEUTRON_PASS neutron
 
@@ -768,7 +772,7 @@ config_controller_linuxbridge()
 	fi
 
 echo "[linux_bridge]
-physical_interface_mappings = provider:PROVIDER_INTERFACE_NAME
+physical_interface_mappings = provider:$PROVIDER_INTERFACE_NAME
 [vxlan]
 enable_vxlan = false
 [securitygroup]
@@ -798,7 +802,6 @@ install_provider_networks()
 	yum install openstack-neutron openstack-neutron-ml2 openstack-neutron-linuxbridge ebtables -y
 	echo "Install Provider Networks OK"
 
-
 	echo "To Config Neutron"
 	config_controller_neutron
 	echo "Config Neutron OK"
@@ -826,7 +829,7 @@ config_metadata_agent()
 	fi
 
 echo "[DEFAULT]
-nova_metadata_host = controller
+nova_metadata_host = $CONTROLLER_HOSTNAME
 metadata_proxy_shared_secret = $METADATA_SECRET" > $DST_FILE
 }
 
@@ -868,4 +871,82 @@ install_neutron()
 	systemctl start neutron-l3-agent.service
 
 	echo "Install Controller Node Neutron OK"
+}
+
+
+config_compute_provider_networks()
+{
+	DST_FILE=/etc/neutron/plugins/ml2/linuxbridge_agent.ini
+	DST_FILE_BAK=/etc/neutron/plugins/ml2/linuxbridge_agent.ini.bak
+	if [ ! -f $DST_FILE_BAK ]; then
+		cp $DST_FILE $DST_FILE_BAK
+	fi
+
+echo "[DEFAULT]
+[linux_bridge]
+physical_interface_mappings = provider:$PROVIDER_INTERFACE_NAME
+[vxlan]
+enable_vxlan = false
+[securitygroup]
+enable_security_group = true
+firewall_driver = neutron.agent.linux.iptables_firewall.IptablesFirewallDriver" > $DST_FILE
+	return 0
+}
+
+config_neutron_compute()
+{
+	DST_FILE=/etc/neutron/neutron.conf
+	DST_FILE_BAK=/etc/neutron/neutron.conf.bak
+	if [ ! -f $DST_FILE_BAK ]; then
+		cp $DST_FILE $DST_FILE_BAK
+	fi
+
+echo "[DEFAULT]
+[DEFAULT]
+transport_url = rabbit://openstack:$RABBIT_PASS@$CONTROLLER_HOSTNAME
+auth_strategy = keystone
+[keystone_authtoken]
+auth_uri = http://$CONTROLLER_HOSTNAME:5000
+auth_url = http://$CONTROLLER_HOSTNAME:35357
+memcached_servers = $CONTROLLER_HOSTNAME:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = neutron
+password = $NEUTRON_PASS
+[oslo_concurrency]
+lock_path = /var/lib/neutron/tmp" > $DST_FILE
+	return 0
+}
+
+install_neutron_compute()
+{
+	yum install openstack-neutron-linuxbridge ebtables ipset -y
+
+	config_neutron_compute
+	if [ "$?" != 0 ]; then
+		echo "config neutron in compute node error"
+		return 1
+	fi
+	echo "Config neutron in compute node OK"
+
+	config_compute_provider_networks
+	if [ "$?" != 0 ]; then
+		echo "config provider networks in compute node error"
+		return 1
+	fi
+	echo "Config Compute Provider Networks OK"
+
+	echo "WARNING: Must config neutron setting to nova in compute..."
+	
+	systemctl restart openstack-nova-compute.service
+	systemctl enable neutron-linuxbridge-agent.service
+	systemctl start neutron-linuxbridge-agent.service
+
+	echo "Install Neutron Service in Compute node OK"
+
+	echo "In Controller node to verify: . admin-openrc\nopenstack network agent list"
+
+	return 0
 }

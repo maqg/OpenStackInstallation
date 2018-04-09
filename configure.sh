@@ -43,3 +43,5 @@ ADMIN_RCFILE=./admin-openrc
 DEMO_RCFILE=./demo-openrc
 
 METADATA_SECRET=metadata123
+
+PROVIDER_INTERFACE_NAME=ens10

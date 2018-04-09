@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# For OpenStack Neutron Service in Controller node Installation
+# For OpenStack Neutron Service Installation in Compute node
 # Henry.Ma
 #
 
@@ -24,7 +24,7 @@ if [ "$OS_VERSION" != 7 ]; then
 	exit 1
 fi
 
-install_neutron
+install_neutron_compute
 echo ""
-echo -e "\e[1;32mInstall Neutron Service OK! \e[0m"
+echo -e "\e[1;32mInstall Neutron Compute Node Service OK! \e[0m"
 echo ""
