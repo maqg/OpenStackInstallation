@@ -41,3 +41,5 @@ OS_IDENTITY_API_VERSION=3
 
 ADMIN_RCFILE=./admin-openrc
 DEMO_RCFILE=./demo-openrc
+
+METADATA_SECRET=metadata123

@@ -277,18 +277,18 @@ install_nova_service()
 	echo "Create 'nova' service OK"
 
 	echo "To Create Compute API Service"
-	openstack endpoint create --region RegionOne compute public http://controller:8774/v2.1
-	openstack endpoint create --region RegionOne compute internal http://controller:8774/v2.1
-	openstack endpoint create --region RegionOne compute admin http://controller:8774/v2.1
+	openstack endpoint create --region RegionOne compute public http://$CONTROLLER_HOSTNAME:8774/v2.1
+	openstack endpoint create --region RegionOne compute internal http://$CONTROLLER_HOSTNAME:8774/v2.1
+	openstack endpoint create --region RegionOne compute admin http://$CONTROLLER_HOSTNAME:8774/v2.1
 	echo "Create Compute API Service OK"
 
 	echo "To Create placement Service"
 	openstack user create --domain default --password $PLACEMENT_PASS placement
 	openstack role add --project service --user placement admin
 	openstack service create --name placement --description "Placement API" placement
-	openstack endpoint create --region RegionOne placement public http://controller:8778
-	openstack endpoint create --region RegionOne placement internal http://controller:8778
-	openstack endpoint create --region RegionOne placement admin http://controller:8778
+	openstack endpoint create --region RegionOne placement public http://$CONTROLLER_HOSTNAME:8778
+	openstack endpoint create --region RegionOne placement internal http://$CONTROLLER_HOSTNAME:8778
+	openstack endpoint create --region RegionOne placement admin http://$CONTROLLER_HOSTNAME:8778
 	echo "Create placement Service OK"
 
 	echo "To Install Nova Service"
@@ -318,6 +318,8 @@ config_nova_service()
 	sed "s/RABBIT_PASS/$RABBIT_PASS/g" -i $FILE_TMP
 	sed "s/NOVA_PASS/$NOVA_PASS/g" -i $FILE_TMP
 	sed "s/PLACEMENT_PASS/$PLACEMENT_PASS/g" -i $FILE_TMP
+	sed "s/NEUTRON_PASS/$NEUTRON_PASS/g" -i $FILE_TMP
+	sed "s/METADATA_SECRET/$METADATA_SECRET/g" -i $FILE_TMP
 	sed "s/CONTROLLER_ADDR/$CONTROLLER_ADDR/g" -i $FILE_TMP
 	sed "s/CONTROLLER_HOSTNAME/$CONTROLLER_HOSTNAME/g" -i $FILE_TMP
 
@@ -439,9 +441,9 @@ config_keystone()
 	keystone-manage credential_setup --keystone-user keystone --keystone-group keystone
 
 	keystone-manage bootstrap --bootstrap-password $ADMIN_PASS \
-		--bootstrap-admin-url http://controller:35357/v3/ \
-		--bootstrap-internal-url http://controller:5000/v3/ \
-		--bootstrap-public-url http://controller:5000/v3/ \
+		--bootstrap-admin-url http://$CONTROLLER_HOSTNAME:35357/v3/ \
+		--bootstrap-internal-url http://$CONTROLLER_HOSTNAME:5000/v3/ \
+		--bootstrap-public-url http://$CONTROLLER_HOSTNAME:5000/v3/ \
 		--bootstrap-region-id RegionOne
 
 	echo "Config KeyStone Service OK"
@@ -522,7 +524,7 @@ install_keystone()
 	source ./admin-openrc
 	unset OS_AUTH_URL OS_PASSWORD
 
-	openstack --os-auth-url http://controller:35357/v3 --os-project-domain-name default \
+	openstack --os-auth-url http://$CONTROLLER_HOSTNAME:35357/v3 --os-project-domain-name default \
 		--os-user-domain-name default --os-project-name admin --os-username admin token issue
 
 	echo "Install KeyStone Service OK"
@@ -555,11 +557,11 @@ create_glance_credentials()
 
 	openstack service create --name glance --description "OpenStack Image" image
 
-	openstack endpoint create --region RegionOne image public http://controller:9292
+	openstack endpoint create --region RegionOne image public http://$CONTROLLER_HOSTNAME:9292
 
-	openstack endpoint create --region RegionOne image internal http://controller:9292
+	openstack endpoint create --region RegionOne image internal http://$CONTROLLER_HOSTNAME:9292
 
-	openstack endpoint create --region RegionOne image admin http://controller:9292
+	openstack endpoint create --region RegionOne image admin http://$CONTROLLER_HOSTNAME:9292
 
 	echo "Create Glance Credentials OK"
 }
@@ -674,4 +676,196 @@ install_glance()
 	echo "To Verify Glance installation"
 	verify_glance_installation
 	echo "Verified Glance Service"
+}
+
+
+onfig_neutron_database()
+{
+	mysql -uroot -p$DBROOT_PASS -e "use neutron;" > /dev/null 2>&1
+	if [ "$?" != 0 ]; then
+		mysql -uroot -p$DBROOT_PASS -e "CREATE DATABASE neutron;"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON neutron* TO 'neutron'@'localhost' IDENTIFIED BY '$NEUTRON_PASS';"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON neutron* TO 'neutron'@'%' IDENTIFIED BY '$NEUTRON_PASS';"
+	fi
+}
+
+
+create_neutron_credentials()
+{
+	openstack user show neutron
+	if [ "$?" = 0 ]; then
+		echo "neutron USER already exist"
+		return 0
+	fi
+
+	openstack user create --domain default --password $NEUTRON_PASS neutron
+
+	openstack role add --project service --user neutron admin
+
+	openstack service create --name neutron --description "OpenStack Networking" network
+
+	openstack endpoint create --region RegionOne network public http://$CONTROLLER_HOSTNAME:9696
+
+	openstack endpoint create --region RegionOne network internal http://$CONTROLLER_HOSTNAME:9696
+
+	openstack endpoint create --region RegionOne network admin http://$CONTROLLER_HOSTNAME:9696
+}
+
+config_controller_neutron()
+{
+	FILE_RAW=./neutron_raw.conf
+	FILE_TMP=./neutron.conf
+	FILE_DST=/etc/neutron/neutron.conf
+	FILE_BAK=/etc/neutron/neutron.conf.bak
+
+	cp $FILE_RAW $FILE_TMP
+
+	sed "s/RABBIT_PASS/$RABBIT_PASS/g" -i $FILE_TMP
+	sed "s/NOVA_PASS/$NOVA_PASS/g" -i $FILE_TMP
+	sed "s/NEUTRON_PASS/$PLACEMENT_PASS/g" -i $FILE_TMP
+	sed "s/CONTROLLER_HOSTNAME/$CONTROLLER_HOSTNAME/g" -i $FILE_TMP
+
+	if [ ! -f $FILE_BAK ]; then
+		cp $FILE_DST $FILE_BAK
+	fi
+
+	mv $FILE_TMP $FILE_DST
+
+	echo "Config Neutron Controller Service OK"
+
+}
+
+config_controller_ml2()
+{
+	DST_FILE=/etc/neutron/plugins/ml2/ml2_conf.ini
+	DST_FILE_BAK=/etc/neutron/plugins/ml2/ml2_conf.ini.bak
+	if [ ! -f $DST_FILE_BAK ]; then
+		cp $DST_FILE $DST_FILE_BAK
+	fi
+
+echo "[DEFAULT]
+[ml2]
+type_drivers = flat,vlan
+tenant_network_types =
+mechanism_drivers = linuxbridge
+extension_drivers = port_security
+[ml2_type_flat]
+flat_networks = provider
+[ml2_type_geneve]
+[ml2_type_gre]
+[ml2_type_vlan]
+[ml2_type_vxlan]
+[securitygroup]
+enable_ipset = true" > $DST_FILE
+}
+
+config_controller_linuxbridge()
+{
+	DST_FILE=/etc/neutron/plugins/ml2/linuxbridge_agent.ini
+	DST_FILE_BAK=/etc/neutron/plugins/ml2/linuxbridge_agent.ini.bak
+	if [ ! -f $DST_FILE_BAK ]; then
+		cp $DST_FILE $DST_FILE_BAK
+	fi
+
+echo "[linux_bridge]
+physical_interface_mappings = provider:PROVIDER_INTERFACE_NAME
+[vxlan]
+enable_vxlan = false
+[securitygroup]
+enable_security_group = true
+firewall_driver = neutron.agent.linux.iptables_firewall.IptablesFirewallDriver" > $DST_FILE
+}
+
+config_controller_dhcp()
+{
+	DST_FILE=/etc/neutron/dhcp_agent.ini
+	DST_FILE_BAK=/etc/neutron/dhcp_agent.ini.bak
+	if [ ! -f $DST_FILE_BAK ]; then
+		cp $DST_FILE $DST_FILE_BAK
+	fi
+
+echo "[DEFAULT]
+interface_driver = linuxbridge
+dhcp_driver = neutron.agent.linux.dhcp.Dnsmasq
+enable_isolated_metadata = true" > $DST_FILE
+}
+
+
+# FOR CONTROLLER NODE
+install_provider_networks()
+{
+	echo "To install Provider Networks"
+	yum install openstack-neutron openstack-neutron-ml2 openstack-neutron-linuxbridge ebtables -y
+	echo "Install Provider Networks OK"
+
+
+	echo "To Config Neutron"
+	config_controller_neutron
+	echo "Config Neutron OK"
+
+	# Modular Layer 2
+	echo "To Config Modular Layer 2"
+	config_controller_ml2
+	echo "Config Modular Layer 2 OK"
+
+	echo "To Config Controller Linux Bridge"
+	config_controller_linuxbridge
+	echo "Config Controller Linux Bridge OK"
+
+	echo "To Config Controller DHCP"
+	config_controller_dhcp
+	echo "Config Controller DHCP OK"
+}
+
+config_metadata_agent()
+{
+	DST_FILE=/etc/neutron/metadata_agent.ini
+	DST_FILE_BAK=/etc/neutron/metadata_agent.ini.bak
+	if [ ! -f $DST_FILE_BAK ]; then
+		cp $DST_FILE $DST_FILE_BAK
+	fi
+
+echo "[DEFAULT]
+nova_metadata_host = controller
+metadata_proxy_shared_secret = $METADATA_SECRET" > $DST_FILE
+}
+
+install_neutron()
+{
+
+	echo "To Config neutron database"
+	config_neutron_database
+	echo "Config neutron database OK"
+
+	echo "To create neutron credentials"
+	create_neutron_credentials
+	echo "Create neutron credentials OK"
+
+	echo "To Install Provider Networks"
+	install_provider_networks
+	echo "Install Provider Networks OK"
+
+	echo "To Config Metadata Agent"
+	config_metadata_agent
+	echo "Config Metadata Agent OK"
+
+	ln -s /etc/neutron/plugins/ml2/ml2_conf.ini /etc/neutron/plugin.ini
+
+	# sync database
+	/bin/sh -c "neutron-db-manage --config-file /etc/neutron/neutron.conf \
+	--config-file /etc/neutron/plugins/ml2/ml2_conf.ini upgrade head" neutron
+
+	systemctl restart openstack-nova-api.service
+
+	systemctl enable neutron-server.service \
+		neutron-linuxbridge-agent.service neutron-dhcp-agent.service \
+		neutron-metadata-agent.service
+	systemctl start neutron-server.service \
+		neutron-linuxbridge-agent.service neutron-dhcp-agent.service \
+		neutron-metadata-agent.service
+
+	systemctl enable neutron-l3-agent.service
+	systemctl start neutron-l3-agent.service
+
+	echo "Install Controller Node Neutron OK"
 }
