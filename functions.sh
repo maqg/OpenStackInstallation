@@ -237,6 +237,8 @@ config_compute_service()
 	systemctl enable libvirtd.service openstack-nova-compute.service
 	systemctl start libvirtd.service openstack-nova-compute.service
 
+	rm $FILE
+
 	echo "Config Compute Service OK"
 }
 
