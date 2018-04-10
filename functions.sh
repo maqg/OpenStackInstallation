@@ -749,8 +749,7 @@ config_controller_ml2()
 		cp $DST_FILE $DST_FILE_BAK
 	fi
 
-echo "[DEFAULT]
-[ml2]
+echo "[ml2]
 type_drivers = flat,vlan
 tenant_network_types =
 mechanism_drivers = linuxbridge
@@ -884,8 +883,7 @@ config_compute_provider_networks()
 		cp $DST_FILE $DST_FILE_BAK
 	fi
 
-echo "[DEFAULT]
-[linux_bridge]
+echo "[linux_bridge]
 physical_interface_mappings = provider:$PROVIDER_INTERFACE_NAME
 [vxlan]
 enable_vxlan = false
@@ -904,7 +902,6 @@ config_neutron_compute()
 	fi
 
 echo "[DEFAULT]
-[DEFAULT]
 transport_url = rabbit://openstack:$RABBIT_PASS@$CONTROLLER_HOSTNAME
 auth_strategy = keystone
 [keystone_authtoken]
@@ -949,6 +946,64 @@ install_neutron_compute()
 	echo "Install Neutron Service in Compute node OK"
 
 	echo "In Controller node to verify: . admin-openrc\nopenstack network agent list"
+
+	return 0
+}
+
+disable_selinux()
+{
+	echo "SELINUX=disabled
+SELINUXTYPE=targeted" > /etc/sysconfig/selinux
+	setenforce 0
+	return 0
+}
+
+config_horizon()
+{
+	FILE_RAW=./dashboard_settings
+	FILE_TMP=./local_settings
+	FILE_DST=/etc/openstack-dashboard/local_settings
+	FILE_BAK=/etc/openstack-dashboard/local_settings.bak
+
+	cp $FILE_RAW $FILE_TMP
+
+	sed "s/CONTROLLER_HOSTNAME/$CONTROLLER_HOSTNAME/g" -i $FILE_TMP
+
+	if [ ! -f $FILE_BAK ]; then
+		cp $FILE_DST $FILE_BAK
+	fi
+
+	mv $FILE_TMP $FILE_DST
+
+	echo "Config Horizon Service OK"
+
+	return 0
+}
+
+
+install_horizon()
+{
+	RESULT=$(rpm -qa openstack-dashboard)
+	if [ "$RESULT" = "" ]; then
+		echo "openstack-dashboard not installed, install it now"
+		yum install openstack-dashboard -y
+	else
+		echo "openstack-dashboard installed OK"
+	fi
+
+	config_horizon
+	if [ "$?" != 0 ]; then
+		echo "Install Horizon Service ERROR"
+		return 1
+	fi
+
+	FILE_TMP=/etc/httpd/conf.d/openstack-dashboard.conf
+	sed -i '/^WSGIApplicationGroup*/d' $FILE_TMP
+	sed -i "N;1aWSGIApplicationGroup %{GLOBAL}" $FILE_TMP
+
+	systemctl restart httpd.service memcached.service
+
+	echo "Config Horizon Service OK"
 
 	return 0
 }

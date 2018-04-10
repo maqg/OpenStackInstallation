@@ -40,6 +40,8 @@ if [ "$?" != 0 ]; then
 	echo ""
 fi
 
+disable_selinux
+
 config_compute_hosts
 if [ "$?" != 0 ]; then
 	echo ""
