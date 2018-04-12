@@ -94,8 +94,8 @@ install_controller_source()
 	if [ "$RESULT" = "" ]; then
 		yum install centos-release-openstack-$OPENSTACK_VERSION -y
 		yum upgrade
-		yum install python-openstackclient -y
 	fi
+	yum install python-openstackclient -y
 	echo "Install $OPENSTACK_VERSION OpenStack Source OK"
 }
 
@@ -130,8 +130,8 @@ install_rabbitmq()
 
 install_memcached()
 {
-	RESULT=$(rpm -qa python-memcached)
-	if [ "$RESULT" = "" ]; then
+	RESULT=$(rpm -qa python-memcached memcached | wc -l)
+	if [ "$RESULT" = 2 ]; then
 
 		yum install memcached python-memcached -y
 
@@ -185,8 +185,8 @@ install_etcd()
 
 install_database()
 {
-	RESULT=$(rpm -qa python2-PyMySQL)
-	if [ "$RESULT" = "" ]; then
+	RESULT=$(rpm -qa python2-PyMySQL mariadb mariadb-server | wc -l)
+	if [ "$RESULT" != 3 ]; then
 		yum install mariadb mariadb-server python2-PyMySQL -y
 
 		DBFILE=/etc/my.cnf.d/openstack.cnf
@@ -1004,6 +1004,185 @@ install_horizon()
 	systemctl restart httpd.service memcached.service
 
 	echo "Config Horizon Service OK"
+
+	return 0
+}
+
+install_lvm_package()
+{
+	RESULT=$(rpm -qa lvm2 device-mapper-persistent-data | wc -l)
+	if [ "$RESULT" != 2 ]; then
+		yum install lvm2 device-mapper-persistent-data -y
+		echo "Install lvm2 and device-mapper-persistent-data OK"
+	else
+		echo "lvm2 and device-mapper-persistent-data already installed"
+	fi
+
+	systemctl enable lvm2-lvmetad.service
+	systemctl start lvm2-lvmetad.service
+
+	return 0
+}
+
+create_lvm_volume()
+{
+	echo "To create LVM with $LVMDISK"
+
+	if [ ! -b $LVMDISK ]; then
+		echo "Device of $LVMDISK not exist"
+		return 1
+	fi
+
+	vgdisplay cinder-volumes > /dev/null 2>&1
+	if [ "$?" = 0 ]; then
+		echo "LVM of cinder-volumes already created"
+		return 0
+	fi
+
+	pvcreate $LVMDISK
+	if [ "$?" != 0 ]; then
+		echo "Create LVM with pvcreate $LVMDISK ERROR"
+		return 1
+	fi
+
+	vgcreate cinder-volumes $LVMDISK
+	if [ "$?" != 0 ]; then
+		echo "Create vg of cinder-volumes with vgcreate ERROR"
+		return 1
+	fi
+
+	return 0
+}
+
+config_lvm()
+{
+	return 0
+}
+
+config_cinder()
+{
+	FILE_RAW=./cinder_raw.conf
+	FILE_TMP=./cinder.conf
+	FILE_DST=/etc/cinder/cinder.conf
+	FILE_BAK=/etc/cinder/cinder.conf.bak
+
+	cp $FILE_RAW $FILE_TMP
+
+	sed "s/RABBIT_PASS/$RABBIT_PASS/g" -i $FILE_TMP
+	sed "s/CINDER_PASS/$CINDER_PASS/g" -i $FILE_TMP
+	sed "s/CONTROLLER_ADDR/$CONTROLLER_ADDR/g" -i $FILE_TMP
+	sed "s/CONTROLLER_HOSTNAME/$CONTROLLER_HOSTNAME/g" -i $FILE_TMP
+
+	if [ ! -f $FILE_BAK ]; then
+		cp $FILE_DST $FILE_BAK
+	fi
+
+	mv $FILE_TMP $FILE_DST
+
+	return 0
+}
+
+install_cinder()
+{
+	RESULT=$(rpm -qa targetcli openstack-cinder python-keystone | wc -l)
+	if [ "$RESULT" != 3 ]; then
+		yum install openstack-cinder targetcli python-keystone -y
+		config_cinder
+		if [ "$?" != 0 ]; then
+			echo "Config Cinder Service ERROR"
+			return 1
+		fi
+
+		systemctl enable openstack-cinder-volume.service target.service
+		systemctl start openstack-cinder-volume.service target.service
+
+		echo "Install and Config Cinder Service OK"
+	else
+		systemctl enable openstack-cinder-volume.service target.service
+		systemctl start openstack-cinder-volume.service target.service
+		echo "Cinder Service already instlaled"
+	fi
+}
+
+config_cinder_database()
+{
+	mysql -uroot -p$DBROOT_PASS -e "use cinder;" > /dev/null 2>&1
+	if [ "$?" != 0 ]; then
+		mysql -uroot -p$DBROOT_PASS -e "CREATE DATABASE cinder;"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON cinder.* TO 'cinder'@'localhost' IDENTIFIED BY '$CINDER_PASS';"
+		mysql -uroot -p$DBROOT_PASS -e "GRANT ALL PRIVILEGES ON cinder.* TO 'cinder'@'%' IDENTIFIED BY '$CINDER_PASS';"
+	fi
+	return 0
+}
+
+create_cinder_credentials()
+{
+	. admin-openrc
+
+	openstack user show cinder
+	if [ "$?" = 0 ]; then
+		echo "USER cinder already exist"
+		return 0
+	fi
+
+	openstack user create --domain default --password $CINDER_PASS cinder
+
+	openstack role add --project service --user cinder admin
+
+	openstack service create --name cinderv2 --description "OpenStack Block Storage" volumev2
+	openstack service create --name cinderv3 --description "OpenStack Block Storage" volumev3
+
+	openstack endpoint create --region RegionOne volumev2 public http://controller:8776/v2/%\(project_id\)s
+	openstack endpoint create --region RegionOne volumev2 internal http://controller:8776/v2/%\(project_id\)s
+	openstack endpoint create --region RegionOne volumev2 admin http://controller:8776/v2/%\(project_id\)s
+
+	openstack endpoint create --region RegionOne volumev3 public http://controller:8776/v2/%\(project_id\)s
+	openstack endpoint create --region RegionOne volumev3 internal http://controller:8776/v2/%\(project_id\)s
+	openstack endpoint create --region RegionOne volumev3 admin http://controller:8776/v2/%\(project_id\)s
+
+	echo "Create Cinder Credentials OK"
+}
+
+
+# install cinder service in storage node
+install_cinder_allinone()
+{
+	# install packages
+	install_lvm_package
+
+	create_lvm_volume
+	if [ "$?" != 0 ]; then
+		echo "Create LVM Volumes ERROR"
+		return 1
+	fi
+	echo "Create LVM Volumes OK"
+
+	config_lvm
+	echo "Create LVM OK"
+
+	install_cinder
+	if [ "$?" != 0 ]; then
+		echo "Install Cinder Service ERROR"
+		return 1
+	fi
+	echo "Install cinder service OK"
+
+	config_cinder_database
+	echo "Create Cinder Database OK"
+
+	create_cinder_credentials
+	echo "Create Cinder Credentials OK"
+
+	/bin/sh -c "cinder-manage db sync" cinder
+
+	echo "To restart nova-api service"
+	systemctl restart openstack-nova-api.service
+
+	echo "To enable cinder service"
+	systemctl enable openstack-cinder-api.service openstack-cinder-scheduler.service
+	systemctl start openstack-cinder-api.service openstack-cinder-scheduler.service
+
+	echo "Install cinder in conroller node OK"
 
 	return 0
 }
