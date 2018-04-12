@@ -30,6 +30,7 @@ config_controller_hosts()
 	echo "127.0.0.1 localhost localhost.localdomain localhost4 localhost4.localdomain4" > $HOST_FILE
 	echo "$CONTROLLER_ADDR $CONTROLLER_HOSTNAME" >> $HOST_FILE
 	echo "$COMPUTE_ADDR $COMPUTE_HOSTNAME" >> $HOST_FILE
+	echo "$BLOCK_ADDR $BLOCK_HOSTNAME" >> $HOST_FILE
 	echo "Config compute host $COMPUTE_ADDR with hostname $COMPUTE_HOSTNAME OK!"
 	return 0
 }
@@ -41,6 +42,7 @@ config_compute_hosts()
 	echo "127.0.0.1 localhost localhost.localdomain localhost4 localhost4.localdomain4" > $HOST_FILE
 	echo "$CONTROLLER_ADDR $CONTROLLER_HOSTNAME" >> $HOST_FILE
 	echo "$COMPUTE_ADDR $COMPUTE_HOSTNAME" >> $HOST_FILE
+	echo "$BLOCK_ADDR $BLOCK_HOSTNAME" >> $HOST_FILE
 	echo "Config compute host $COMPUTE_ADDR with hostname $COMPUTE_HOSTNAME OK!"
 	return 0
 }

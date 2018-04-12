@@ -10,17 +10,9 @@
 . ./functions.sh
 
 LANG=C
-DBPASSWD=123456
 LOGFILE=/var/log/openstack_install_compute.log
 
 OS_VERSION=$(cat /etc/centos-release | cut -b 22)
-
-# like NAME#VERSION#MUST, for eg: python3#3.2#yes
-PACKAGES="nginx:1.6.3:yes \
-		  lrzsz::yes \
-		  rabbitmq-server::yes \
-		  chrony::yes \
-		  zip::yes"
 
 # Get platform and version info
 get_platform_info
