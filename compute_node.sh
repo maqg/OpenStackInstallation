@@ -50,8 +50,8 @@ install_chrony
 config_chrony_client
 echo -e "\e[1;32mInstall and Config chrony OK! \e[0m"
 
-install_compute_components
-config_compute_service
+install_compute_service
+echo -e "\e[1;32mConfig Compute Service OK! \e[0m"
 
 echo ""
 echo -e "\e[1;32mInstall OpenStack Compute Node of \"$OPENSTACK_VERSION\" OK! \e[0m"

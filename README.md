@@ -7,7 +7,7 @@ Just yum update -y nss curl libcurl
 ## How to install?
 - Modify configure.sh.
 - With controller.sh to install base controller env.
-- With keystone.sh to install identfy service in controller node.
+- With keystone.sh to install identity service in controller node.
 - With glance.sh to install image service int controller node.
 - With nova.sh to install nova install controller node.
 - With compute.sh to install base env in COMPUTE node.

@@ -116,73 +116,75 @@ install_rabbitmq()
 	RESULT=$(rpm -qa rabbitmq-server)
 	if [ "$RESULT" = "" ]; then
 		yum install rabbitmq-server -y
-
 		systemctl enable rabbitmq-server.service
 		systemctl start rabbitmq-server.service
-
-		rabbitmqctl add_user openstack $RABBIT_PASS
-
-		rabbitmqctl set_permissions openstack ".*" ".*" ".*"
-
 		echo "Install RabbitMQ OK"
 	else
 		echo "RabbitMQ already installed"
 	fi
+
+	RESULT=$(rabbitmqctl list_users | grep openstack | wc -l)
+	if [ "$RESULT" != 1 ]; then
+		rabbitmqctl add_user openstack $RABBIT_PASS
+		rabbitmqctl set_permissions openstack ".*" ".*" ".*"
+		echo "rabbitmq user of openstack created OK"
+	else
+		echo "rabbitmq user of openstack already exist"
+	fi
+
+	return 0
 }
 
 install_memcached()
 {
 	RESULT=$(rpm -qa python-memcached memcached | wc -l)
 	if [ "$RESULT" = 2 ]; then
-
 		yum install memcached python-memcached -y
+	fi
 
-		CONFIG_FILE=/etc/sysconfig/memcached
-
-		echo "PORT=\"11211\"
+	CONFIG_FILE=/etc/sysconfig/memcached
+	echo "PORT=\"11211\"
 USER=\"memcached\"
 MAXCONN=\"1024\"
 CACHESIZE=\"64\"
 OPTIONS=\"-l 127.0.0.1,::1,$CONTROLLER_HOSTNAME\"" > $CONFIG_FILE
 		
-		systemctl enable memcached.service
-		systemctl start memcached.service
+	systemctl enable memcached.service
+	systemctl restart memcached.service
 
-		echo "Install MemCached OK"
-	else
-		echo "MemCached already installed"
-	fi
+	echo "Install MemCached OK"
+
+	return 0
 }
 
 install_etcd()
 {
 	RESULT=$(rpm -qa etcd)
 	if [ "$RESULT" = "" ]; then
-
 		yum install etcd -y
-
-		FILE_RAW=./etcd_raw.conf
-		FILE_TMP=./etcd.conf
-		FILE_DST=/etc/etcd/etcd.conf
-		FILE_BAK=/etc/etcd/etcd.conf.bak
-
-		cp $FILE_RAW $FILE_TMP
-
-		sed "s/CONTROLLER_ADDR/$CONTROLLER_ADDR/g" -i $FILE_TMP
-
-		if [ ! -f $FILE_BAK ]; then
-			cp $FILE_DST $FILE_BAK
-		fi
-
-		mv $FILE_TMP $FILE_DST
-
-		systemctl enable etcd.service
-		systemctl start etcd.service
-
-		echo "Install ETCD OK"
-	else
-		echo "ETCD already installed"
 	fi
+
+	FILE_RAW=./etcd_raw.conf
+	FILE_TMP=./etcd.conf
+	FILE_DST=/etc/etcd/etcd.conf
+	FILE_BAK=/etc/etcd/etcd.conf.bak
+
+	cp $FILE_RAW $FILE_TMP
+
+	sed "s/CONTROLLER_ADDR/$CONTROLLER_ADDR/g" -i $FILE_TMP
+
+	if [ ! -f $FILE_BAK ]; then
+		cp $FILE_DST $FILE_BAK
+	fi
+
+	mv $FILE_TMP $FILE_DST
+
+	systemctl enable etcd.service
+	systemctl restart etcd.service
+
+	echo "Install ETCD OK"
+
+	return 0
 }
 
 install_database()
@@ -190,8 +192,15 @@ install_database()
 	RESULT=$(rpm -qa python2-PyMySQL mariadb mariadb-server | wc -l)
 	if [ "$RESULT" != 3 ]; then
 		yum install mariadb mariadb-server python2-PyMySQL -y
+		mysql_secure_installation
 
-		DBFILE=/etc/my.cnf.d/openstack.cnf
+		echo "Install MariaDB OK"
+	else
+		echo "MariaDB already installed"
+	fi
+
+	DBFILE=/etc/my.cnf.d/openstack.cnf
+	if [ ! -f $DBFILE ]; then
 		touch $DBFILE
 
 		echo "[mysqld]" >> $DBFILE
@@ -203,28 +212,18 @@ install_database()
 		echo "character-set-server = utf8" >> $DBFILE
 
 		systemctl enable mariadb.service
-		systemctl start mariadb.service
-
-		mysql_secure_installation
-
-		echo "Install MariaDB OK"
-	else
-		echo "MariaDB already installed"
+		systemctl restart mariadb.service
 	fi
-}
-
-install_compute_components()
-{
-	yum install openstack-nova-compute -y
-	echo "Install Compute Components OK"
 }
 
 #
 # sed '/^\s*$/d' -i nova.conf
 # sed '/^#/d' -i nova.conf
 #
-config_compute_service()
+install_compute_service()
 {
+	yum install openstack-nova-compute -y
+
 	FILE=./nova_compute.conf
 	cp ./nova_compute_raw.conf $FILE
 	sed "s/RABBIT_PASS/$RABBIT_PASS/g" -i $FILE
